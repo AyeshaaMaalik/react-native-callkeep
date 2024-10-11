@@ -1,75 +1,261 @@
-import React, { useEffect } from 'react';
-import { View, Text, Button, StyleSheet, Alert, Platform } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { Platform, StyleSheet, Text, View, TouchableOpacity, ScrollView } from 'react-native';
 import RNCallKeep from 'react-native-callkeep';
-import { request, PERMISSIONS, RESULTS } from 'react-native-permissions';
+import BackgroundTimer from 'react-native-background-timer';
+import DeviceInfo from 'react-native-device-info';
+import uuid from 'react-native-uuid'; 
 
-const App = () => {
-  useEffect(() => {
-    const setupCallKeep = async () => {
-      if (Platform.OS === 'android') {
-        const permission = await request(PERMISSIONS.ANDROID.READ_PHONE_STATE);
-        if (permission !== RESULTS.GRANTED) {
-          Alert.alert('Permission required', 'READ_PHONE_STATE permission is required to manage calls');
-          return;
-        }
-      }
+BackgroundTimer.start();
 
-      const options = {
-        ios: {
-          appName: 'MyApp', 
-        },
-        android: {
-          alertTitle: 'Permissions Required',
-          alertDescription: 'This app needs permission to access your phone calls.',
-          cancelButton: 'Cancel',
-          okButton: 'OK',
-          additionalPermissions: [PERMISSIONS.ANDROID.CALL_PHONE],
-        },
-      };
-
-      try {
-        await RNCallKeep.setup(options); 
-        RNCallKeep.setAvailable(true); 
-        console.log('CallKeep setup complete');
-      } catch (error) {
-        console.error('CallKeep setup error:', error);
-      }
-    };
-
-    setupCallKeep();
-  }, []);
-
-  const onReceiveCall = () => {
-    const callUUID = '12345678-1234-1234-1234-123456789012'; 
-    const handle = 'John Doe'; 
-    RNCallKeep.displayIncomingCall(callUUID, handle);
-  };
-
-  const onMakeCall = () => {
-    const callUUID = '87654321-4321-4321-4321-210987654321'; 
-    const handle = 'Jane Smith'; 
-    RNCallKeep.startCall(callUUID, handle, 'generic', true); 
-  };
-
-  return (
-    <View style={styles.container}>
-      <Text style={styles.text}>React Native CallKeep Demo</Text>
-      <Button title="Receive Call" onPress={onReceiveCall} />
-      <Button title="Make Call" onPress={onMakeCall} />
-    </View>
-  );
-};
-
+const hitSlop = { top: 10, left: 10, right: 10, bottom: 10};
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
+    marginTop: 20,
+    backgroundColor: '#fff',
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  text: {
-    fontSize: 20,
+  button: {
+    marginTop: 20,
     marginBottom: 20,
+  },
+  callButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 30,
+    width: '100%',
+  },
+  logContainer: {
+    flex: 3,
+    width: '100%',
+    backgroundColor: '#D9D9D9',
+  },
+  log: {
+    fontSize: 10,
+  }
+});
+
+RNCallKeep.setup({
+  ios: {
+    appName: 'CallKeepDemo',
+  },
+  android: {
+    alertTitle: 'Permissions required',
+    alertDescription: 'This application needs to access your phone accounts',
+    cancelButton: 'Cancel',
+    okButton: 'ok',
   },
 });
 
-export default App;
+const getNewUuid = () => uuid.v4();
+
+const format = uuid => uuid.split('-')[0];
+
+const getRandomNumber = () => String(Math.floor(Math.random() * 100000));
+
+const isIOS = Platform.OS === 'ios';
+
+export default function App() {
+  const [logText, setLog] = useState('');
+  const [heldCalls, setHeldCalls] = useState({}); 
+  const [mutedCalls, setMutedCalls] = useState({});
+  const [calls, setCalls] = useState({});
+
+  const log = (text) => {
+    console.info(text);
+    setLog(logText + "\n" + text);
+  };
+
+  const addCall = (callUUID, number) => {
+    setHeldCalls({ ...heldCalls, [callUUID]: false });
+    setCalls({ ...calls, [callUUID]: number });
+  };
+
+  const removeCall = (callUUID) => {
+    const { [callUUID]: _, ...updated } = calls;
+    const { [callUUID]: __, ...updatedHeldCalls } = heldCalls;
+
+    setCalls(updated);
+    setHeldCalls(updatedHeldCalls);
+  };
+
+  const setCallHeld = (callUUID, held) => {
+    setHeldCalls({ ...heldCalls, [callUUID]: held });
+  };
+
+  const setCallMuted = (callUUID, muted) => {
+    setMutedCalls({ ...mutedCalls, [callUUID]: muted });
+  };
+
+  const displayIncomingCall = (number) => {
+    const callUUID = getNewUuid();
+    addCall(callUUID, number);
+
+    log(`[displayIncomingCall] ${format(callUUID)}, number: ${number}`);
+
+    RNCallKeep.displayIncomingCall(callUUID, number, number, 'number', false);
+  };
+
+  const displayIncomingCallNow = () => {
+    displayIncomingCall(getRandomNumber());
+  };
+
+  const displayIncomingCallDelayed = () => {
+    BackgroundTimer.setTimeout(() => {
+      displayIncomingCall(getRandomNumber());
+    }, 3000);
+  };
+
+  const answerCall = ({ callUUID }) => {
+    const number = calls[callUUID];
+    log(`[answerCall] ${format(callUUID)}, number: ${number}`);
+
+    RNCallKeep.startCall(callUUID, number, number);
+
+    BackgroundTimer.setTimeout(() => {
+      log(`[setCurrentCallActive] ${format(callUUID)}, number: ${number}`);
+      RNCallKeep.setCurrentCallActive(callUUID);
+    }, 1000);
+  };
+
+  const didPerformDTMFAction = ({ callUUID, digits }) => {
+    const number = calls[callUUID];
+    log(`[didPerformDTMFAction] ${format(callUUID)}, number: ${number} (${digits})`);
+  };
+
+  const didReceiveStartCallAction = ({ handle }) => {
+    if (!handle) {
+      return;
+    }
+    const callUUID = getNewUuid();
+    addCall(callUUID, handle);
+
+    log(`[didReceiveStartCallAction] ${callUUID}, number: ${handle}`);
+
+    RNCallKeep.startCall(callUUID, handle, handle);
+
+    BackgroundTimer.setTimeout(() => {
+      log(`[setCurrentCallActive] ${format(callUUID)}, number: ${handle}`);
+      RNCallKeep.setCurrentCallActive(callUUID);
+    }, 1000);
+  };
+
+  const didPerformSetMutedCallAction = ({ muted, callUUID }) => {
+    const number = calls[callUUID];
+    log(`[didPerformSetMutedCallAction] ${format(callUUID)}, number: ${number} (${muted})`);
+
+    setCallMuted(callUUID, muted);
+  };
+
+  const didToggleHoldCallAction = ({ hold, callUUID }) => {
+    const number = calls[callUUID];
+    log(`[didToggleHoldCallAction] ${format(callUUID)}, number: ${number} (${hold})`);
+
+    setCallHeld(callUUID, hold);
+  };
+
+  const endCall = ({ callUUID }) => {
+    const handle = calls[callUUID];
+    log(`[endCall] ${format(callUUID)}, number: ${handle}`);
+
+    removeCall(callUUID);
+  };
+
+  const hangup = (callUUID) => {
+    RNCallKeep.endCall(callUUID);
+    removeCall(callUUID);
+  };
+
+  const setOnHold = (callUUID, held) => {
+    const handle = calls[callUUID];
+    RNCallKeep.setOnHold(callUUID, held);
+    log(`[setOnHold: ${held}] ${format(callUUID)}, number: ${handle}`);
+
+    setCallHeld(callUUID, held);
+  };
+
+  const setOnMute = (callUUID, muted) => {
+    const handle = calls[callUUID];
+    RNCallKeep.setMutedCall(callUUID, muted);
+    log(`[setMutedCall: ${muted}] ${format(callUUID)}, number: ${handle}`);
+
+    setCallMuted(callUUID, muted);
+  };
+
+  const updateDisplay = (callUUID) => {
+    const number = calls[callUUID];
+    if (isIOS) {
+      RNCallKeep.updateDisplay(callUUID, 'New Name', number);
+    } else {
+      RNCallKeep.updateDisplay(callUUID, number, 'New Name');
+    }
+
+    log(`[updateDisplay: ${number}] ${format(callUUID)}`);
+  };
+
+  useEffect(() => {
+    RNCallKeep.addEventListener('answerCall', answerCall);
+    RNCallKeep.addEventListener('didPerformDTMFAction', didPerformDTMFAction);
+    RNCallKeep.addEventListener('didReceiveStartCallAction', didReceiveStartCallAction);
+    RNCallKeep.addEventListener('didPerformSetMutedCallAction', didPerformSetMutedCallAction);
+    RNCallKeep.addEventListener('didToggleHoldCallAction', didToggleHoldCallAction);
+    RNCallKeep.addEventListener('endCall', endCall);
+
+    return () => {
+      RNCallKeep.removeEventListener('answerCall', answerCall);
+      RNCallKeep.removeEventListener('didPerformDTMFAction', didPerformDTMFAction);
+      RNCallKeep.removeEventListener('didReceiveStartCallAction', didReceiveStartCallAction);
+      RNCallKeep.removeEventListener('didPerformSetMutedCallAction', didPerformSetMutedCallAction);
+      RNCallKeep.removeEventListener('didToggleHoldCallAction', didToggleHoldCallAction);
+      RNCallKeep.removeEventListener('endCall', endCall);
+    };
+  }, []);
+
+  if (isIOS && DeviceInfo.isEmulator()) {
+    return <Text style={styles.container}>CallKeep doesn't work on iOS emulator</Text>;
+  }
+
+  return (
+    <View style={styles.container}>
+      <TouchableOpacity onPress={displayIncomingCallNow} style={styles.button} hitSlop={hitSlop}>
+        <Text style={{color:'black'}}>Display incoming call now</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity onPress={displayIncomingCallDelayed} style={styles.button} hitSlop={hitSlop}>
+        <Text style={{color:'black'}}>Display incoming call now in 3s</Text>
+      </TouchableOpacity>
+
+      {Object.keys(calls).map(callUUID => (
+        <View key={callUUID} style={styles.callButtons}>
+          <TouchableOpacity
+            onPress={() => setOnHold(callUUID, !heldCalls[callUUID])}
+            style={styles.button}
+            hitSlop={hitSlop}
+          >
+            <Text>{heldCalls[callUUID] ? 'Unhold' : 'Hold'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setOnMute(callUUID, !mutedCalls[callUUID])}
+            style={styles.button}
+            hitSlop={hitSlop}
+          >
+            <Text>{mutedCalls[callUUID] ? 'Unmute' : 'Mute'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => hangup(callUUID)} style={styles.button} hitSlop={hitSlop}>
+            <Text>Hangup</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => updateDisplay(callUUID)} style={styles.button} hitSlop={hitSlop}>
+            <Text>Update UI</Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+      <ScrollView style={styles.logContainer}>
+        <Text style={styles.log}>{logText}</Text>
+      </ScrollView>
+    </View>
+  );
+}
